@@ -5,17 +5,14 @@ import qs from "qs";
 import fs from "fs";
 import { parseHTML } from "linkedom";
 
-import parse, { parseTest } from "./parser";
+import parseRows from "./parser";
 
 const args = yargs(process.argv.slice(1))
   .scriptName("SparkNotes Scraper")
   .options({ audio: { type: "boolean", default: false } });
 
-parseTest();
-
-process.exit(1);
-
 console.log(args);
+
 (async () => {
   if (!process.env.EMAIL || !process.env.PASSWORD)
     throw new Error(
@@ -63,13 +60,14 @@ console.log(args);
     .document.querySelectorAll<HTMLAnchorElement>(`a[href^="/nofear/"]`)
     .forEach((el) => urls.push(el.href));
   fs.writeFileSync("./dash.html", dashboard.data);
+  // TODO create prompt for users to choose specific texts to scrape
 
   console.log(`${urls.length} No Fear translations found.`);
 
   // iterate over the url array
   for (const url of urls) {
     console.log(`Fetching ${url}.`);
-    // fetch the list of scenes
+    // fetch the list of scenes/chapters
     const translations = await client.get<string>(
       `https://www.sparknotes.com${url}`
     );
@@ -77,27 +75,27 @@ console.log(args);
       throw new Error(
         "Request data not found. Exiting because unable to determine correct path for future requests."
       );
-    const scenes: string[] = [];
+    const part: string[] = [];
 
     // get the url path for the no fear translation texts and push to array
     parseHTML(translations.data)
       .document.querySelectorAll<HTMLAnchorElement>(
         `a[class="texts-landing-page__toc__section__link"]`
       )
-      .forEach((el) => scenes.push(el.href));
+      .forEach((el) => part.push(el.href));
 
-    console.log(`${scenes.length} scenes/chapters found.`);
+    console.log(`${part.length} scenes/chapters found.`);
 
-    const sceneRows: NodeListOf<HTMLTableRowElement>[] = [];
+    const chapters = [];
 
     // iterate over scene urls
-    for (const scene of scenes) {
+    for (const p of part) {
       // console.log(`${translations.request.res.responseUrl}${scene}`);
-      console.log(`Fetching ${scene}.`);
+      console.log(`Fetching ${p}.`);
 
       // combine cookies from dashboard request and auth request and remove duplicates
       const texts = await client.get<string>(
-        `https://www.sparknotes.com/plus${url}/${scene}`,
+        `https://www.sparknotes.com/plus${url}/${p}`,
         {
           headers: {
             Cookie: [
@@ -110,27 +108,29 @@ console.log(args);
         }
       );
 
-      // fs.writeFileSync("./scene.html", texts.data);
+      fs.writeFileSync("./scene.html", texts.data);
 
       const { document } = parseHTML(texts.data);
 
-      // get the table rows for the no fear translations, original text in <td> and modern translation in second <td>
+      // get the table rows for the no fear translations, original text in first <td> and modern translation in second <td>
       let textRows = document
         .querySelector<HTMLTableElement>(`table[class*="noFear"]`)
         ?.querySelectorAll("tr");
 
       if (!textRows) throw new Error("Failed to parse HTML of text.");
-      sceneRows.push(textRows);
+      chapters.push(parseRows(Array.from(textRows)));
     }
 
-    // parse the entire book / play
-    // get the title and remove extra whitespace because sparknotes is bad
-    parse(
-      sceneRows,
-      document
-        .querySelector(`h1[class^="TitleHeader_title"]`)
-        ?.textContent!.replace(/^\s+|\s+$|\s+(?=\s)/g, "")!
-    );
+    console.log(`Parsed ${chapters.length} scenes/chapters.`);
+
+    fs.writeFileSync("./book.json", JSON.stringify(chapters));
+
+    //   document
+    //   .querySelector(`h1[class^="TitleHeader_title"]`)
+    //   ?.textContent!.replace(/^\s+|\s+$|\s+(?=\s)/g, "")!,
+    // document.querySelector<HTMLTextAreaElement>(
+    //   ".TitleHeader_authorLink__header"
+    // )!.innerHTML
 
     break;
   }
