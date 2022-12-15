@@ -1,47 +1,70 @@
 import "dotenv/config";
+import yargs from "yargs/yargs";
 import { default as axios } from "axios";
 import qs from "qs";
-import { JSDOM } from "jsdom";
+import fs from "fs";
+import { parseHTML } from "linkedom";
 
-import parse from "./parser";
+import parse, { parseTest } from "./parser";
 
-const client = axios.create({
-  withCredentials: true,
-  headers: {
-    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-    "User-Agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:107.0) Gecko/20100101 Firefox/107.0",
-    Host: "www.sparknotes.com",
-    "X-Requested-With": "XMLHttpRequest",
-  },
-});
+const args = yargs(process.argv.slice(1))
+  .scriptName("SparkNotes Scraper")
+  .options({ audio: { type: "boolean", default: false } });
 
+parseTest();
+
+process.exit(1);
+
+console.log(args);
 (async () => {
-  console.log("Logging into Sparknotes account.");
+  if (!process.env.EMAIL || !process.env.PASSWORD)
+    throw new Error(
+      "EMAIL or PASSWORD not found in environment. Did you rename the .env.example to .env and specify your email and password?"
+    );
 
-  // login to sparknotes account
-  const auth = await client.post<{ success: boolean }>(
+  console.log("Logging into SparkNotes account.");
+  const auth = await axios.post<{ success: boolean }>(
     "https://www.sparknotes.com/login/",
-    qs.stringify({ email: process.env.EMAIL, password: process.env.PASSWORD })
+    qs.stringify({ email: process.env.EMAIL, password: process.env.PASSWORD }),
+    {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:107.0) Gecko/20100101 Firefox/107.0",
+        Host: "www.sparknotes.com",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    }
   );
 
   // response should be a json object with a success boolean
   if (!auth.data.success) throw new Error("Login failed");
 
-  console.log("Fetching No Fear Shakespeare translations.");
+  const client = axios.create({
+    // withCredentials isn't working, probably some cors issue or whatever
+    // withCredentials: true,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:107.0) Gecko/20100101 Firefox/107.0",
+      Host: "www.sparknotes.com",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+  });
 
+  console.log("Fetching No Fear translations.");
   // Get the HTML for the list of shakespeare no fear translations
-  const shakespeare = await client.get<string>(
-    "https://www.sparknotes.com/shakespeare/"
+  const dashboard = await client.get<string>(
+    "https://www.sparknotes.com/plus/dashboard/no-fear/",
+    { headers: { Cookie: auth.headers["set-cookie"]?.join("; ") } }
   );
+
   const urls: string[] = [];
-
-  // convert the string to a DOM and find the anchor elements and add them to the array
-  new JSDOM(shakespeare.data).window.document
-    .querySelectorAll<HTMLAnchorElement>(".no-fear-thumbs__thumb__link")
+  // convert the string to a DOM and find the anchor elements and add the urls to the array
+  parseHTML(dashboard.data)
+    .document.querySelectorAll<HTMLAnchorElement>(`a[href^="/nofear/"]`)
     .forEach((el) => urls.push(el.href));
+  fs.writeFileSync("./dash.html", dashboard.data);
 
-  console.log(`${urls.length} No Fear Shakespeare translations found.`);
+  console.log(`${urls.length} No Fear translations found.`);
 
   // iterate over the url array
   for (const url of urls) {
@@ -57,34 +80,57 @@ const client = axios.create({
     const scenes: string[] = [];
 
     // get the url path for the no fear translation texts and push to array
-    new JSDOM(translations.data).window.document
-      .querySelectorAll<HTMLAnchorElement>(
-        ".texts-landing-page__toc__section__link"
+    parseHTML(translations.data)
+      .document.querySelectorAll<HTMLAnchorElement>(
+        `a[class="texts-landing-page__toc__section__link"]`
       )
       .forEach((el) => scenes.push(el.href));
 
-    console.log(`${scenes.length} scenes found.`);
+    console.log(`${scenes.length} scenes/chapters found.`);
+
+    const sceneRows: NodeListOf<HTMLTableRowElement>[] = [];
+
     // iterate over scene urls
     for (const scene of scenes) {
+      // console.log(`${translations.request.res.responseUrl}${scene}`);
       console.log(`Fetching ${scene}.`);
-      // fetch scenes
-      // must get the location of the url from the scene list because the original paths are forwarded (301) to the correct one (thanks sparknotes)
+
+      // combine cookies from dashboard request and auth request and remove duplicates
       const texts = await client.get<string>(
-        `${translations.request.res.responseUrl}${scene}`
+        `https://www.sparknotes.com/plus${url}/${scene}`,
+        {
+          headers: {
+            Cookie: [
+              ...new Set([
+                ...auth.headers["set-cookie"]!,
+                ...dashboard.headers["set-cookie"]!,
+              ]),
+            ],
+          },
+        }
       );
 
-      const { document } = new JSDOM(texts.data).window;
+      // fs.writeFileSync("./scene.html", texts.data);
+
+      const { document } = parseHTML(texts.data);
 
       // get the table rows for the no fear translations, original text in <td> and modern translation in second <td>
       let textRows = document
-        .querySelector<HTMLTableElement>(".noFear--hasNumbers")
+        .querySelector<HTMLTableElement>(`table[class*="noFear"]`)
         ?.querySelectorAll("tr");
 
       if (!textRows) throw new Error("Failed to parse HTML of text.");
-      parse(textRows);
-
-      break;
+      sceneRows.push(textRows);
     }
+
+    // parse the entire book / play
+    // get the title and remove extra whitespace because sparknotes is bad
+    parse(
+      sceneRows,
+      document
+        .querySelector(`h1[class^="TitleHeader_title"]`)
+        ?.textContent!.replace(/^\s+|\s+$|\s+(?=\s)/g, "")!
+    );
 
     break;
   }

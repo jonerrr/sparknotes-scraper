@@ -1,10 +1,10 @@
-# Sparknotes No Fear Translation Scraper
+# SparkNotes No Fear Translation Scraper
 
-Scrape all of the Shakespeare No Fear Translations from Sparknotes into a couple of HTML files.
+Scrape all of the Shakespeare No Fear Translations from SparkNotes into a couple of HTML files.
 
 ## Requirements
 
-- Sparknotes account with plus membership
+- SparkNotes account with plus membership
 - Node.js
 - pnpm
 
