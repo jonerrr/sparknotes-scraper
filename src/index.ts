@@ -5,7 +5,7 @@ import qs from "qs";
 import fs from "fs";
 import { parseHTML } from "linkedom";
 
-import parseRows from "./parser";
+import parseRows, { Parsed } from "./parser";
 
 const args = yargs(process.argv.slice(1))
   .scriptName("SparkNotes Scraper")
@@ -86,11 +86,18 @@ console.log(args);
 
     console.log(`${part.length} scenes/chapters found.`);
 
-    const chapters = [];
+    const parsed: Parsed = {
+      name: document
+        .querySelector(`h1[class^="TitleHeader_title"]`)
+        ?.textContent!.replace(/^\s+|\s+$|\s+(?=\s)/g, "")!,
+      author: document.querySelector<HTMLTextAreaElement>(
+        ".TitleHeader_authorLink__header"
+      )!.innerHTML,
+      chapters: [],
+    };
 
     // iterate over scene urls
     for (const p of part) {
-      // console.log(`${translations.request.res.responseUrl}${scene}`);
       console.log(`Fetching ${p}.`);
 
       // combine cookies from dashboard request and auth request and remove duplicates
@@ -118,19 +125,19 @@ console.log(args);
         ?.querySelectorAll("tr");
 
       if (!textRows) throw new Error("Failed to parse HTML of text.");
-      chapters.push(parseRows(Array.from(textRows)));
+      parsed.chapters.push({
+        name: document.querySelector<HTMLTextAreaElement>(
+          ".interior-header__title__text__pagetitle"
+        )?.innerText!,
+        lines: parseRows(Array.from(textRows)),
+      });
     }
 
-    console.log(`Parsed ${chapters.length} scenes/chapters.`);
+    console.log(
+      `Parsed ${parsed.name} ${parsed.chapters.length} scenes/chapters.`
+    );
 
-    fs.writeFileSync("./book.json", JSON.stringify(chapters));
-
-    //   document
-    //   .querySelector(`h1[class^="TitleHeader_title"]`)
-    //   ?.textContent!.replace(/^\s+|\s+$|\s+(?=\s)/g, "")!,
-    // document.querySelector<HTMLTextAreaElement>(
-    //   ".TitleHeader_authorLink__header"
-    // )!.innerHTML
+    fs.writeFileSync("./book.json", JSON.stringify(parsed));
 
     break;
   }

@@ -16,29 +16,16 @@ interface Line {
   tooltips?: Tooltip[];
 }
 
-interface Parsed {
+interface Chapter {
+  name: string;
+  lines: [Line, Line][];
+}
+
+export interface Parsed {
   name: string;
   author: string;
+  chapters: Chapter[];
 }
-
-export interface Book extends Parsed {
-  chapters: [Line, Line][];
-  acts: never;
-}
-
-export interface Play extends Parsed {
-  // act numbers are determined by index in array plus one
-  acts: Act[];
-  chapters: never;
-}
-
-interface Act {
-  // scene numbers are determined by index in array plus one
-  // first line in array is original text, second line is modern
-  scenes: [Line, Line][];
-}
-
-type Media = Book | Play;
 
 function parseRows(table: HTMLTableRowElement[]): [Line, Line][] {
   const lines = [];
